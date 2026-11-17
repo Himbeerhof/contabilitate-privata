@@ -1,6 +1,6 @@
 // Contabilitate privată – lucrează și fără internet.
 // Aplicația se ia întâi de pe internet (actualizări imediate); fără semnal, din copia salvată.
-const CACHE = "cp-v4";
+const CACHE = "cp-v5";
 const BIG = ["./models/det.onnx", "./models/rec.onnx", "./models/keys.txt", "./ort/ort-wasm-simd-threaded.wasm", "./ort/ort-wasm-simd-threaded.mjs", "./cp-scan.js"];
 const SHELL = ["./", "./index.html", "./cp-core.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable-192.png", "./icon-maskable-512.png", "./apple-touch-icon.png", "./favicon-32.png", "./vendor/jspdf.umd.min.js", "./vendor/exceljs.min.js", "./vendor/msal-browser.min.js"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).then(() => c.addAll(BIG).catch(() => {}))).then(() => self.skipWaiting())));
