@@ -220,6 +220,9 @@ input.den{-moz-appearance:textfield;appearance:textfield}
     <div class="row" style="margin-top:10px">
       <button class="btn primary grow" id="btn-new-ls">+ Lieferschein nou</button>
     </div>
+    <div class="row" style="margin-top:8px"><span class="hint" style="margin:0;width:100%">Lieferschein vechi (de dinainte de program):</span>
+      <label class="btn grow scan-lbl" style="position:relative;text-align:center;overflow:hidden">📷 Cameră<input type="file" accept="image/*" capture="environment" data-scan="ls" style="position:absolute;left:0;top:0;width:1px;height:1px;opacity:0"></label><label class="btn grow scan-lbl" style="position:relative;text-align:center;overflow:hidden">🖼 Galerie<input type="file" accept="image/*" multiple data-scan="ls" style="position:absolute;left:0;top:0;width:1px;height:1px;opacity:0"></label>
+    </div>
     <div class="list" id="ls-list"></div>
   </section>
 
@@ -3831,6 +3834,7 @@ I18N_DE.push(["Aplicația pe acest dispozitiv", "Die App auf diesem Gerät"], ["
   ["Pe iPhone/iPad: deschide pagina în ", "Auf iPhone/iPad: Seite in "], [", apasă ", " öffnen, auf "], ["Partajare", "Teilen"], [" (pătratul cu săgeata în sus) → ", " (Quadrat mit Pfeil nach oben) tippen → "], ["Adaugă pe ecranul principal", "Zum Home-Bildschirm"],
   ["Ca s-o instalezi: în meniul browserului (⋮ sau ≡) alege ", "Zum Installieren im Browser-Menü (⋮ oder ≡) "], ["Instalează aplicația", "App installieren"], [". Cel mai bine merge în Chrome sau Edge.", " wählen. Am besten in Chrome oder Edge."],
   ["Aplicația a fost instalată.", "Die App wurde installiert."]);
+I18N_DE.push(["Lieferschein vechi (de dinainte de program):", "Alter Lieferschein (von vor dem Programm):"], ["Citesc Lieferschein-ul…", "Lese den Lieferschein…"]);
 const I18N_SHORT = {"mai": "Mai", "noi.": "Nov.", "oct.": "Okt.", "ian.": "Jan.", "feb.": "Feb.", "mar.": "März", "apr.": "Apr.", "iun.": "Jun.", "iul.": "Jul.", "aug.": "Aug.", "sept.": "Sept.", "dec.": "Dez.", "Ieși": "Verlassen", "Tot": "Alle", "Cota": "Satz", "Data": "Datum", "Net": "Netto", "Brut": "Brutto", "TVA": "USt.", "Total": "Summe", "Luna": "Monat", "Zile": "Tage", "Venit": "Einnahme", "Plată": "Zahlung", "Bancă": "Bank", "Card": "Karte", "Numerar": "Bar", "Stoc": "Bestand", "Casă": "Kasse", "Oraș": "Ort", "Țara": "Land", "Țară": "Land", "Sumă": "Betrag", "l": "l", "kg": "kg", "valoare": "Wert", "mai.": "Mai", "sep.": "Sep."};
 const UI_DEFAULT = (typeof window.__UI_DEFAULT__ === "string") ? window.__UI_DEFAULT__ : "ro";
 let uiLang = UI_DEFAULT, i18nBusy = false;
@@ -4673,14 +4677,14 @@ const scanMod = () => (scanModP ||= import("./cp-scan.js"));
 async function getSample() { return true; }
 function productByArt(art, name) { return Object.values(S.products).find(p => (p.plu && String(p.plu) === String(art))) || productMatch(name); }
 async function scanInvoice(list, mode) {
-  const Z = mode === "z", EXP = mode === "exp", OLD = mode === "old";
+  const Z = mode === "z", EXP = mode === "exp", OLD = mode === "old", LSO = mode === "ls";
   const files = list.filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name)).slice(0, 4);
   if (!list.length) return;
   if (!files.length) { toast("Alege o poză (JPG/PNG) PDF-urile nu pot fi citite aici – fă o captură de ecran.", 4500); return; }
   const sf = await getSample();
   
   const ctl = new AbortController();
-  const o = sheet(`<h3>${Z ? "Citesc raportul Z…" : EXP ? "Citesc factura de cheltuieli…" : OLD ? "Citesc factura ta veche…" : "Citesc factura…"}</h3><div class="hint" id="sc-st">Pregătesc ${files.length > 1 ? files.length + " poze" : "poza"}…</div>
+  const o = sheet(`<h3>${Z ? "Citesc raportul Z…" : EXP ? "Citesc factura de cheltuieli…" : OLD ? "Citesc factura ta veche…" : LSO ? "Citesc Lieferschein-ul…" : "Citesc factura…"}</h3><div class="hint" id="sc-st">Pregătesc ${files.length > 1 ? files.length + " poze" : "poza"}…</div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-a="x">Renunță</button></div>`);
   let cancelled = false;
   o.addEventListener("click", ev => { if (ev.target.dataset.a === "x") { cancelled = true; ctl.abort(); o.remove(); } });
@@ -4753,7 +4757,7 @@ Reguli:
 Produse existente: ${prods.length ? prods.join("; ") : "(niciunul)"}`;
     const mod = await scanMod();
     if (cancelled) return;
-    const d = await mod.extract(Z ? "z" : EXP ? "exp" : OLD ? "old" : "in", images, { productByArt });
+    const d = await mod.extract(Z ? "z" : EXP ? "exp" : OLD ? "old" : LSO ? "ls" : "in", images, { productByArt, productMatch: n => productMatch(n), customers: Object.values(S.customers).map(c => c.name).filter(Boolean), products: Object.values(S.products).map(p => ({ name: p.name, unit: p.unit, alias: p.alias })), self: { name: S.settings.name, street: S.settings.street } });
     if (cancelled) return;
     const num = v => v === null || v === undefined || v === "" ? NaN : parseNum(v);
     const items = (Array.isArray(d.items) ? d.items : []).map(it => {
@@ -4763,6 +4767,27 @@ Produse existente: ${prods.length ? prods.join("; ") : "(niciunul)"}`;
       return { name: pr ? pr.name : String(it.name || "").trim(), raw: String(it.name || "").trim(), qty: isNaN(qty) ? "" : String(r3(qty)).replace(".", ","), unit: pr ? (pr.unit || "kg") : (String(it.unit || "kg").trim() || "kg"), price: isNaN(p) ? "" : String(Math.round(p * 10000) / 10000).replace(".", ",") };
     }).filter(i => i.name);
     const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || "") ? d.date : localISO();
+    if (LSO) {
+      o.remove();
+      // fără preț pe hârtie: iau ultimul preț folosit pentru același produs (întâi la același client)
+      const lastPrice = (desc, cid) => { const n = normName(desc); let best = null;
+        [...Object.values(S.notes), ...Object.values(S.invoices)].forEach(doc => (doc.items || []).forEach(i => { if (normName(i.desc) !== n || !i.price) return;
+          const sc = (cid && doc.customerId === cid ? 2 : 0), dt = i.date || doc.date || ""; if (!best || sc > best.sc || (sc === best.sc && dt > best.dt)) best = { sc, dt, p: i.price }; }));
+        return best ? best.p : ""; };
+      const okD = v => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+      const cu = d.customer ? Object.values(S.customers).find(x => normName(x.name) === normName(d.customer)) : null;
+      const l = blankLs(cu ? cu.id : null);
+      if (okD(d.date)) { l.date = d.date; if (!d.number) l.number = nextLsNumber(d.date, l.profileId); }
+      if (d.number) l.number = String(d.number);
+      const its = (Array.isArray(d.items) ? d.items : []).map(it => blankRow(null, { date: okD(it.date) ? it.date : l.date, ls: l.number, desc: String(it.desc || "").trim(),
+        qty: isNaN(num(it.qty)) ? "" : String(r3(num(it.qty))).replace(".", ","), unit: String(it.unit || "kg"),
+        price: isNaN(num(it.price)) ? lastPrice(it.desc, cu ? cu.id : null) : String(Math.round(num(it.price) * 10000) / 10000).replace(".", ",") })).filter(it => it.desc);
+      if (its.length) l.items = its;
+      const dup = Object.values(S.notes).some(x => x.number === l.number);
+      openLs(l, null, true);
+      toast(`Lieferschein citit din poză – verifică datele.${cu ? "" : " Clientul nu l-am recunoscut: alege-l din listă."}${its.length ? "" : " N-am găsit articolele: adaugă-le de mână."}${dup ? " Numărul " + l.number + " există deja!" : ""}`, 6500);
+      return;
+    }
     if (OLD) {
       o.remove();
       const okD = v => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
