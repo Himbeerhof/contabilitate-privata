@@ -26,8 +26,8 @@ async function loadApp({ settings = {} } = {}) {
     url: "http://app.test/index.html",
     runScripts: "dangerously", resources: new Local(), pretendToBeVisual: true, virtualConsole: vc,
     beforeParse(w) {
-      const { indexedDB, IDBKeyRange } = require("fake-indexeddb");
-      w.indexedDB = indexedDB; w.IDBKeyRange = IDBKeyRange;
+      const { IDBFactory, IDBKeyRange } = require("fake-indexeddb");
+      w.indexedDB = new IDBFactory(); w.IDBKeyRange = IDBKeyRange; // bază de date nouă pentru fiecare test
       Object.defineProperty(w, "crypto", { value: webcrypto });
       w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
       w.structuredClone = structuredClone;
@@ -35,6 +35,8 @@ async function loadApp({ settings = {} } = {}) {
       w.Response = Response; w.Blob = Blob;
       w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
       w.scrollTo = () => {};
+      // jsdom nu are File.arrayBuffer (browserele au)
+      if (!w.File.prototype.arrayBuffer) w.File.prototype.arrayBuffer = function () { return new Promise(res => { const r = new w.FileReader(); r.onload = () => res(r.result); r.readAsArrayBuffer(this); }); };
       w.__saved = []; // fișierele „descărcate” de aplicație ajung aici
     }
   });

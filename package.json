@@ -3,7 +3,7 @@
   "private": true,
   "description": "Teste pentru aplicația publicată (nu face parte din aplicație)",
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/*.test.js"
+    "test": "rm -rf tests/out && node --test --test-concurrency=1 tests/*.test.js"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.0.0",

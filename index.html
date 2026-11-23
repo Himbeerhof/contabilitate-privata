@@ -199,6 +199,8 @@ input.den{-moz-appearance:textfield;appearance:textfield}
       <button class="btn primary grow" id="ed-save">Salvează</button>
       <button class="btn" id="ed-pdf">PDF</button>
       <button class="btn" id="ed-xr" title="Factură electronică XRechnung">E-Rechnung</button>
+      <button class="btn" id="ed-zf" title="PDF cu factura electronică XRechnung înăuntru (ZUGFeRD)">ZUGFeRD</button>
+      <button class="btn hidden" id="ed-dun" title="Amintire de plată / somație pentru factura restantă">Somație</button>
       <button class="btn" id="ed-dup">Duplică</button>
       <button class="btn" id="ed-storno" title="Creează o factură de stornare (Stornorechnung) cu sumele negative">Stornează</button>
       <button class="btn danger" id="ed-del">Șterge</button>
@@ -297,6 +299,15 @@ input.den{-moz-appearance:textfield;appearance:textfield}
       <button class="btn grow" id="bk-add-out">− Cheltuială</button>
       <button class="btn grow" id="bk-add-in" style="color:var(--ok)">+ Alt venit</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <label class="btn grow" style="position:relative;text-align:center;overflow:hidden" title="XRechnung (XML) sau ZUGFeRD (PDF) primite de la furnizori">📄 E-Rechnung primită<input type="file" accept=".xml,.pdf,application/xml,text/xml,application/pdf" multiple data-einv style="position:absolute;left:0;top:0;width:1px;height:1px;opacity:0"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn grow" id="bk-vat">🧾 Declarație TVA</button>
+      <button class="btn grow" id="bk-datev" title="Fișier pentru Steuerberater">DATEV</button>
+      <button class="btn grow" id="bk-lock">🔒 Închide luna</button>
+    </div>
+    <div class="hint" id="bk-lockinfo" style="margin-top:6px"></div>
 
     <div id="bk-due" style="margin-top:12px"></div>
     <div id="bk-months-wrap">
@@ -409,6 +420,7 @@ input.den{-moz-appearance:textfield;appearance:textfield}
         <label class="btn" style="display:inline-block">Importă backup<input type="file" id="bk-import" accept="application/json,.json" class="hidden"></label>
       </div>
       <div class="hint">Backup-ul conține setările, clienții, facturile, Lieferscheine, registrul contabil și inventarul (produse, intrări, ieșiri, casă).</div>
+      <div id="bk-auto"></div>
     </div>
   </section>
 </div>
@@ -2792,7 +2804,8 @@ function prof(id) {
 const pidOf = d => (d && PROF_DEF[d.profileId]) ? d.profileId : "de";
 const defPid = () => PROF_DEF[S.settings.defaultProfile] ? S.settings.defaultProfile : "de";
 function vatRates(pid) {
-  const l = String(prof(pid).vatRates || "").split(/[;\s]+/).map(x => x.trim()).filter(Boolean).map(parseNum);
+  const P = prof(pid), l = String(P.vatRates || "").split(/[;\s]+/).map(x => x.trim()).filter(Boolean).map(parseNum);
+  if (P.pauschal) l.unshift(parseNum(P.rate24 || "7,8")); // Pauschallandwirt § 24 UStG
   const u = [...new Set(l)]; return u.length ? u : [0];
 }
 function vatOpts(cur, pid) {
@@ -2902,13 +2915,16 @@ const Store = {
     if (kind === "settings") { S.settings = { ...DEFAULTS, ...c }; await this.engine.put("settings", "main", c); }
     else {
       const prev = S[kind][c.id];
+      if (AUDIT_KINDS.includes(kind) && typeof lockCheck === "function") lockCheck(kind, prev, c); // luni închise (Festschreibung)
       if (prev && AUDIT_KINDS.includes(kind) && stableStr(prev) !== stableStr(c)) await this.audit(kind, "edit", prev);
       S[kind][c.id] = c; await this.engine.put(kind, c.id, c);
     }
   },
   async del(kind, id) {
     if (kind === "audit") throw new Error("Jurnalul de modificări nu se poate șterge.");
-    const prev = S[kind][id]; if (prev && AUDIT_KINDS.includes(kind)) await this.audit(kind, "delete", prev);
+    const prev = S[kind][id];
+    if (prev && AUDIT_KINDS.includes(kind) && typeof lockCheck === "function") lockCheck(kind, prev, null);
+    if (prev && AUDIT_KINDS.includes(kind)) await this.audit(kind, "delete", prev);
     delete S[kind][id]; await this.engine.del(kind, id);
   },
   async audit(kind, action, before) {
@@ -2949,7 +2965,7 @@ const Store = {
 function showBanner(t) { const b = $("#banner"); b.textContent = t; b.classList.remove("hidden"); }
 async function safe(fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); return true; }
-  catch (e) { console.error(e); toast(e && e.code === "quota_exceeded" ? "Spațiul de stocare e plin. Fă un backup și șterge date vechi." : "Nu s-a putut salva. Încearcă din nou."); return false; }
+  catch (e) { console.error(e); if (e && e.code === "locked") { toast(e.message, 7000); return false; } toast(e && e.code === "quota_exceeded" ? "Spațiul de stocare e plin. Fă un backup și șterge date vechi." : "Nu s-a putut salva. Încearcă din nou."); return false; }
 }
 
 /* ================= calcule ================= */
@@ -2970,6 +2986,12 @@ function calcLs(ls) {
   const rate = parseNum(ls.vat), vat = r2(net * rate / 100);
   const units = {}; (ls.items || []).forEach(it => { const u = it.unit || "kg"; units[u] = r3((units[u] || 0) + parseNum(it.qty)); });
   return { net, rate, vat, gross: r2(net + vat), units };
+}
+// mențiunea obligatorie pentru Pauschallandwirte (§ 24 UStG), dacă pe factură e cota § 24
+function p24Note(doc, lang) {
+  const P = prof(pidOf(doc)); if (!P.pauschal || doc.kleinunternehmer) return "";
+  const r = parseNum(P.rate24 || "7,8"); if (!(doc.items || []).some(it => parseNum(it.vat) === r)) return "";
+  return lang === "ro" ? `TVA după cota medie conform § 24 UStG (${pct(r)}).` : `Umsatzsteuer nach Durchschnittssatz gemäß § 24 UStG (${pct(r)}).`;
 }
 const unitsStr = (units, map) => Object.entries(units).filter(([, v]) => v).map(([u, v]) => numStr(v) + " " + ((map && map[u]) || u)).join(" + ") || "–";
 function invState(inv) {
@@ -3265,6 +3287,7 @@ function openInvoice(inv, custId, isNew, scanNote) {
   $("#ed-intro").value = ed.intro || ""; $("#ed-notes").value = ed.notes || "";
   $("#ed-del").classList.toggle("hidden", ed._isNew); $("#ed-dup").classList.toggle("hidden", ed._isNew);
   $("#ed-storno").classList.toggle("hidden", ed._isNew || !!ed.stornoOf || Object.values(S.invoices).some(i => i.stornoOf === ed.id));
+  $("#ed-dun").classList.toggle("hidden", ed._isNew || !!ed.stornoOf || invState(ed) !== "over");
   ed.profileId = pidOf(ed); markSeg("#ed-prof", ed.profileId);
   fillCustSelects(); setLang(ed.lang); renderInvRows(); updatePaidVis(); show("editor");
 }
@@ -3563,6 +3586,7 @@ function journal() {
 }
 function renderBooks() {
   $("#bk-due").innerHTML = dueHTML();
+  if (typeof lockInfo === "function") lockInfo();
   const pf = $("#bk-prof").value, all = journal().filter(r => !pf || r.pid === pf);
   const year = yearOptions($("#bk-year"), all.map(r => r.date));
   const ms = $("#bk-month"), curM = ms.value;
@@ -3646,6 +3670,8 @@ function entryForm(e, type, scan) {
     </div>
     <div class="hint" id="en-calc" style="margin:-4px 0 10px"></div>
     <div class="fld"><label class="f">Notițe</label><textarea id="en-note" rows="2">${esc(e.note)}</textarea></div>
+    <div class="fld"><label class="f">Documente atașate (bon, factură)</label><div id="en-att" class="row" style="gap:6px"></div>
+      <label class="btn small" style="display:inline-block;margin-top:6px">📎 Atașează<input type="file" id="en-attf" accept="image/*,application/pdf,.xml,.pdf" multiple class="hidden"></label></div>
     <div class="row" style="justify-content:space-between">
       ${isNew ? "<span></span>" : `<button class="btn danger" data-a="del">Șterge</button>`}
       <div class="row"><button class="btn" data-a="x">Renunță</button><button class="btn primary" data-a="ok">Salvează</button></div>
@@ -3669,6 +3695,7 @@ function entryForm(e, type, scan) {
     const n = normName(o.querySelector("#en-party").value), prev = Object.values(S.entries).filter(x => x.iban && normName(x.party) === n).sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
     if (prev) { o.querySelector("#en-iban").value = fmtIban(prev.iban); o.querySelector("#en-bic").value = prev.bic || ""; } });
   setType(e.type); recalc(); setProf(e.profileId); setSt(stOpen ? "open" : "paid"); stVis();
+  if (typeof attUI === "function") attUI(o, e);
   o.querySelector("#en-type").addEventListener("click", stVis);
   o.querySelector("#en-prof").addEventListener("click", ev => { if (ev.target.dataset.v) setProf(ev.target.dataset.v); });
   o.querySelector("#en-type").addEventListener("click", ev => { if (ev.target.dataset.v) setType(ev.target.dataset.v); });
@@ -3688,7 +3715,7 @@ function entryForm(e, type, scan) {
     if (!e.date) { toast("Alege data."); return; }
     if (!parseNum(e.gross)) { toast("Completează suma."); return; }
     if (!e.party && !e.desc) { toast("Completează furnizorul sau descrierea."); return; }
-    if (await safe(() => Store.put("entries", e), stOpen ? "Salvat în „De plătit”" : "Salvat")) { renderBooks(); renderInventory(); o.remove(); }
+    if (await safe(async () => { if (typeof attCommit === "function") await attCommit(e); await Store.put("entries", e); }, stOpen ? "Salvat în „De plătit”" : "Salvat")) { renderBooks(); renderInventory(); o.remove(); }
   });
 }
 $("#bk-csv").addEventListener("click", () => {
@@ -3844,6 +3871,7 @@ function buildInvoicePDF(inv) {
   const rows = ku ? [] : [...(t.vats.length > 1 ? t.vats.map(v => [L.invNetR(pct(v.rate)), money(v.base)]) : []), [L.invNet, money(t.net)], ...t.vats.filter(v => v.rate).map(v => [L.invVat(pct(v.rate)), money(v.amount)])];
   y = totalsBox(doc, rows, [ku ? L.invSum : L.invGross, money(t.gross)], y);
   if (ku) y = paragraph(doc, L.ku, y);
+  if (p24Note(inv, inv.lang)) y = paragraph(doc, p24Note(inv, inv.lang), y);
   if (inv.stornoOf) { if (t.gross < 0) y = paragraph(doc, L.stornoPay, y); }
   else if (inv.status === "paid") y = paragraph(doc, L.paid(fmtDate(inv.paidDate)), y);
   else if (inv.status !== "cancelled" && inv.dueDate) y = paragraph(doc, L.pay(fmtDate(inv.dueDate), inv.number), y);
@@ -4925,6 +4953,7 @@ Produse existente: ${prods.length ? prods.join("; ") : "(niciunul)"}`;
         date: unpaid ? (okDate(d.date) ? d.date : localISO()) : okDate(d.dueDate) ? d.dueDate : okDate(d.date) ? d.date : localISO(), party: d.supplier ? String(d.supplier) : "", desc: d.desc ? String(d.desc) : "",
         cat: CAT_OUT.some(c => c[0] === d.cat) ? d.cat : "other", gross: gross ? String(r2(groups.length > 1 ? groups[0].gross : gross)).replace(".", ",") : "",
         vat: groups.length ? String(groups[0].rate) : String(pid === "at" ? 20 : 19), pay: "bank", docNo: d.invoiceNo ? String(d.invoiceNo) : "", note: notes.join(" · ") };
+      en._files = images.map((b, i) => new File([b], `bon-${(en.docNo || en.date).replace(/[^\w.-]+/g, "_")}${images.length > 1 ? "-" + (i + 1) : ""}.jpg`, { type: b.type || "image/jpeg" }));
       if (S.view !== "books") show("books");
       entryForm(en, "out", true);
       return;
@@ -5020,7 +5049,7 @@ function buildXRechnung(inv) {
 <ram:SpecifiedLineTradeSettlement>${tax(r)}<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${a2(lineTotal(it))}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
 </ram:IncludedSupplyChainTradeLineItem>`);
   });
-  const notes = [inv.intro, inv.notes, ku ? "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet." : ""].filter(Boolean)
+  const notes = [inv.intro, inv.notes, ku ? "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet." : "", p24Note(inv, "de")].filter(Boolean)
     .map(n => `<ram:IncludedNote><ram:Content>${xe(n)}</ram:Content></ram:IncludedNote>`).join("");
   const addr = a => `<ram:PostalTradeAddress><ram:PostcodeCode>${xe(a.zip)}</ram:PostcodeCode>${a.street ? `<ram:LineOne>${xe(a.street)}</ram:LineOne>` : ""}${a.line2 ? `<ram:LineTwo>${xe(a.line2)}</ram:LineTwo>` : ""}<ram:CityName>${xe(a.city)}</ram:CityName><ram:CountryID>${a.country}</ram:CountryID></ram:PostalTradeAddress>`;
   const sellerTax = [P.vatId ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${xe(P.vatId.replace(/\s/g, ""))}</ram:ID></ram:SpecifiedTaxRegistration>` : "",
@@ -5118,17 +5147,13 @@ $("#btn-csv").addEventListener("click", () => {
   list.forEach(i => { const t = calcInv(i); rows.push([prof(pidOf(i)).flag, i.number, fmtDate(i.date), i.customer?.name, d(t.net), d(t.vatTotal), d(t.gross), STATE_LBL[invState(i)], fmtDate(i.dueDate), fmtDate(i.paidDate), [...new Set((i.items || []).map(x => x.ls).filter(Boolean))].join(", ")].map(q).join(";")); });
   saveFile(`Rechnungen_${year === "all" ? "alle" : year}.csv`, "﻿" + rows.join("\r\n"));
 });
-$("#bk-export").addEventListener("click", () => {
-  const data = { app: "facturare", version: 2, exportedAt: new Date().toISOString(), settings: S.settings };
-  KINDS.forEach(k => data[k] = Object.values(S[k]));
-  saveFile(`facturare-backup-${localISO()}.json`, JSON.stringify(data, null, 1));
-});
+$("#bk-export").addEventListener("click", () => doBackup());
 $("#bk-audit").addEventListener("click", () => {
   const list = Object.values(S.audit).sort((a, b) => (a.at || "").localeCompare(b.at || ""));
   if (!list.length) { toast("Nu există încă modificări înregistrate."); return; }
-  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`, KN = { invoices: "Rechnung", notes: "Lieferschein", entries: "Buchung", cash: "Kasse (Tag)", cashmonths: "Kasse (Monat)", deposits: "Bankeinzahlung" };
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`, KN = { invoices: "Rechnung", notes: "Lieferschein", entries: "Buchung", cash: "Kasse (Tag)", cashmonths: "Kasse (Monat)", deposits: "Bankeinzahlung", settings: "Festschreibung" };
   const rows = [["Zeitpunkt", "Gerät", "Art", "Beleg", "Aktion", "Stand vorher (JSON)"].map(q).join(";")];
-  list.forEach(a => rows.push([new Date(a.at).toLocaleString("de-DE"), a.dev, KN[a.kind] || a.kind, a.docNo, a.action === "delete" ? "gelöscht" : "geändert", JSON.stringify(a.before)].map(q).join(";")));
+  list.forEach(a => rows.push([new Date(a.at).toLocaleString("de-DE"), a.dev, KN[a.kind] || a.kind, a.docNo, ({ delete: "gelöscht", lock: "festgeschrieben bis", unlock: "wieder geöffnet" })[a.action] || "geändert", JSON.stringify(a.before)].map(q).join(";")));
   saveFile(`Aenderungsprotokoll-${localISO()}.csv`, "\ufeff" + rows.join("\r\n"));
 });
 $("#bk-import").addEventListener("change", async e => {
@@ -5138,8 +5163,10 @@ $("#bk-import").addEventListener("change", async e => {
   const cnt = KINDS.map(k => (d[k] || []).length);
   if (!(await confirmBox(`Importi ${cnt[0]} clienți, ${cnt[1]} facturi, ${cnt[2]} Lieferscheine, ${cnt[3]} înregistrări, ${cnt[4]} produse, ${cnt[5]} intrări/ieșiri și ${cnt[6]} zile de casă, ${cnt[7]} rapoarte lunare, ${cnt[8]} depuneri la bancă și ${cnt[9]} intrări în jurnalul de modificări? Cele cu același ID vor fi suprascrise.`, "Importă", false))) return;
   let ok = true;
-  try { if (d.settings) await Store.put("settings", d.settings); for (const k of KINDS) for (const x of d[k] || []) if (x && x.id) await Store.put(k, x); }
+  window.__noLock = true; // restaurarea unui backup nu e o modificare a lunilor închise
+  try { if (d.settings) await Store.put("settings", d.settings); for (const k of KINDS) for (const x of d[k] || []) if (x && x.id && JSON.stringify(S[k][x.id] || null) !== JSON.stringify(x)) await Store.put(k, x); if (d.files && window.Files) await Files.importAll(d.files); }
   catch (err) { ok = false; }
+  window.__noLock = false;
   renderLists(); fillSettings(); toast(ok ? "Backup importat." : "Importul s-a oprit la jumătate. Încearcă din nou.");
 });
 
@@ -5163,6 +5190,9 @@ function renderProfiles() {
     return `<div class="card" style="margin-bottom:10px"><div style="font-weight:800;margin-bottom:10px">${pid === "de" ? "🇩🇪" : "🇦🇹"} ${P.label}</div>
       <div class="grid2">${f("taxNo", "Steuernummer")}${f("vatId", "USt-IdNr. / UID")}</div>
       <label class="chk fld"><input type="checkbox" id="p-${pid}-kleinunternehmer" ${P.kleinunternehmer ? "checked" : ""}><span>Fără TVA (Kleinunternehmer)</span></label>
+      ${pid === "de" ? `<div class="grid2"><label class="chk fld"><input type="checkbox" id="p-de-pauschal" ${P.pauschal ? "checked" : ""}><span>Pauschallandwirt (§ 24 UStG)</span></label>
+        <div class="fld"><label class="f">Cotă § 24 (%)</label><input type="text" inputmode="decimal" id="p-de-rate24" value="${esc(P.rate24 ?? "7,8")}"></div></div>
+        <div class="hint" style="margin-top:-6px">Doar pentru fermele care aplică regimul forfetar (Durchschnittssatz). Cota se adaugă la cotele TVA și apare pe facturi cu mențiunea § 24 UStG. Cota legală din 2025: 7,8 %.</div>` : ""}
       <div class="grid2">${f("vatRates", "Cote TVA (separate prin ;)", "7; 19; 0")}
         <div class="fld"><label class="f">TVA implicit</label><select id="p-${pid}-defaultVat">${vatOpts(P.defaultVat, pid)}</select></div></div>
       <div class="grid2">${f("prefix", "Prefix factură", "(gol = doar anul)")}${f("reStart", "Următorul nr. factură", "", "number")}${f("lsPrefix", "Prefix Lieferschein", "(gol = doar anul)")}${f("lsStart", "Următorul nr. Lieferschein", "", "number")}</div>
@@ -5201,7 +5231,8 @@ $("#s-save").addEventListener("click", async () => {
   PIDS.forEach(pid => { const g = k => $(`#p-${pid}-${k}`).value.trim();
     s.profiles[pid] = { taxNo: g("taxNo"), vatId: g("vatId"), kleinunternehmer: $(`#p-${pid}-kleinunternehmer`).checked, vatRates: g("vatRates") || PROF_DEF[pid].vatRates,
       defaultVat: parseNum(g("defaultVat")), prefix: g("prefix"), reStart: Math.max(1, parseInt(g("reStart"), 10) || 1),
-      lsPrefix: g("lsPrefix"), lsStart: Math.max(1, parseInt(g("lsStart"), 10) || 1) }; });
+      lsPrefix: g("lsPrefix"), lsStart: Math.max(1, parseInt(g("lsStart"), 10) || 1),
+      ...(pid === "de" ? { pauschal: $("#p-de-pauschal").checked, rate24: $("#p-de-rate24").value.trim() || "7,8" } : {}) }; });
   if (s.profiles.de.prefix === s.profiles.at.prefix && s.profiles.de.lsPrefix === s.profiles.at.lsPrefix) toast("Atenție: Germania și Austria au aceleași prefixe – numerotarea va fi comună.", 3500);
   PROF_KEYS.forEach(k => delete s[k]);
   s.lsPrices = $("#s-lsprices").checked; s.logo = pendingLogo || "";
@@ -5371,5 +5402,6 @@ renderInstall();
   if (!S.settings.name) toast("Bun venit! Completează întâi datele firmei.", 3500);
 })();
 </script>
+<script src="cp-extra.js"></script>
 </body>
 </html>

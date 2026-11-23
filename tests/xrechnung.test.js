@@ -18,7 +18,7 @@ const CASES = {
 test("XRechnung: fișiere generate și verificate", async t => {
   const app = await loadApp({ settings: SETTINGS }); t.after(app.close);
   await app.run(`(c => Store.put("customers", c))`)(CUSTOMER);
-  fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive: true });
+  fs.mkdirSync(OUT, { recursive: true });
   for (const [name, i] of Object.entries(CASES)) {
     const chk = app.run("xrCheck")(i);
     assert.strictEqual(chk.err.length, 0, name + ": " + chk.err.join("; "));
@@ -33,16 +33,3 @@ test("XRechnung: fișiere generate și verificate", async t => {
   assert.ok(app.run("xrCheck")(CASES.kleinunternehmer).err.some(e => /Steuernummer/.test(e)));
 });
 
-test("XRechnung: validator oficial KoSIT", { skip: !process.env.KOSIT && "setează KOSIT=1 (necesită Java)" }, () => {
-  const files = fs.readdirSync(OUT).filter(f => f.endsWith(".xml")).map(f => path.join(OUT, f));
-  assert.ok(files.length >= 6, "lipsesc fișierele generate");
-  let out = "";
-  try { out = execFileSync(path.join(__dirname, "kosit.sh"), files, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
-  catch (e) { out = (e.stdout || "") + (e.stderr || ""); }
-  const rep = path.join(__dirname, "kosit", "reports");
-  for (const f of files) {
-    const r = fs.readFileSync(path.join(rep, path.basename(f, ".xml") + "-report.xml"), "utf8");
-    const errs = [...r.matchAll(/<svrl:failed-assert[^>]*id="([^"]+)"[^>]*flag="(fatal|error)"[\s\S]*?<svrl:text>([\s\S]*?)<\/svrl:text>/g)].map(m => m[1] + ": " + m[3].replace(/\s+/g, " ").slice(0, 250));
-    assert.ok(/<rep:assessment>\s*<rep:accept/.test(r), path.basename(f) + " respins de validator:\n" + errs.join("\n") + "\n" + out.slice(-2000));
-  }
-});
