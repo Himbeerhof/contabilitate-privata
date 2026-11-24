@@ -4390,7 +4390,7 @@ function moveForm(mv, type, scan) {
         <div class="fld"><label class="f">TVA</label><select id="mf-vat">${vatOpts(bk.vat, bk.pid)}</select></div>
         </div></div>` : ""}
     ${scan?.z ? `<div class="card" style="margin:12px 0;background:var(--bg)">
-      <label class="chk"><input type="checkbox" id="mf-tocash" ${scan.hand ? "checked" : ""}><span>Trece la <b>Casă</b> banii din casă (suma scrisă de mână)</span></label>
+      <label class="chk"><input type="checkbox" id="mf-tocash"><span>Trece și la <b>Casă</b> banii din casă (suma scrisă de mână) <span class="hint">– de obicei nu: la Casă scrii tu suma numărată</span></span></label>
       <div id="mf-cashf" style="margin-top:10px">
         <div class="fld"><label class="f">Oraș / piață</label><input type="text" id="mf-place" list="mf-places" value="${esc(lastPlace())}" placeholder="ex. Dornbirn">${placesDL("mf-places")}</div>
         <div class="grid2"><div class="fld"><label class="f">Suma scrisă de mână € (încasat, cu bacșiș)</label><input type="text" inputmode="decimal" id="mf-hand" value="${scan.hand ? String(scan.hand).replace(".", ",") : ""}" placeholder="0,00"></div>
