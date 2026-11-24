@@ -4080,6 +4080,12 @@ function productMatch(n) {
   return !tie && bd <= (g.length >= 10 ? 2 : 1) ? best : null;
 }
 const lastPlace = () => (Object.values(S.cash).filter(c => c.place).sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0] || {}).place || "";
+/* piața după ziua săptămânii: marți și vineri Bregenz, miercuri și sâmbătă Dornbirn (0 = duminică) */
+const WEEK_PLACES = { 2: "Bregenz", 5: "Bregenz", 3: "Dornbirn", 6: "Dornbirn" };
+const placeFor = date => { const wd = date ? new Date(date + "T12:00:00").getDay() : NaN; return ({ ...WEEK_PLACES, ...(S.settings.weekPlaces || {}) })[wd] || lastPlace(); };
+const autoPlace = (o, dateSel, placeSel) => { const d = o.querySelector(dateSel), p = o.querySelector(placeSel); if (!d || !p) return;
+  p.addEventListener("input", () => { p.dataset.touched = "1"; });
+  d.addEventListener("change", () => { if (!p.dataset.touched) p.value = placeFor(d.value); }); };
 const allPlaces = () => [...new Set(Object.values(S.cash).map(c => c.place).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));
 const placesDL = id => `<datalist id="${id}">${allPlaces().map(p => `<option value="${esc(p)}">`).join("")}</datalist>`;
 const cashTotal = c => r2(parseNum(c.cash) + parseNum(c.card) + parseNum(c.other));
@@ -4389,10 +4395,10 @@ function moveForm(mv, type, scan) {
         <div class="fld"><label class="f">Categorie</label><select id="mf-cat">${CAT_OUT.map(([k, ro]) => `<option value="${k}" ${k === bk.cat ? "selected" : ""}>${esc(ro)}</option>`).join("")}</select></div>
         <div class="fld"><label class="f">TVA</label><select id="mf-vat">${vatOpts(bk.vat, bk.pid)}</select></div>
         </div></div>` : ""}
-    ${scan?.z ? `<div class="card" style="margin:12px 0;background:var(--bg)">
+    ${scan?.z ? `<div class="fld" style="margin-top:12px"><label class="f">Oraș / piață <span class="hint">(se pune singur după zi: marți și vineri Bregenz, miercuri și sâmbătă Dornbirn – îl poți schimba)</span></label><input type="text" id="mf-place" list="mf-places" value="${esc(mv.place || placeFor(mv.date))}" placeholder="ex. Dornbirn">${placesDL("mf-places")}</div>
+      <div class="card" style="margin:12px 0;background:var(--bg)">
       <label class="chk"><input type="checkbox" id="mf-tocash"><span>Trece și la <b>Casă</b> banii din casă (suma scrisă de mână) <span class="hint">– de obicei nu: la Casă scrii tu suma numărată</span></span></label>
       <div id="mf-cashf" style="margin-top:10px">
-        <div class="fld"><label class="f">Oraș / piață</label><input type="text" id="mf-place" list="mf-places" value="${esc(lastPlace())}" placeholder="ex. Dornbirn">${placesDL("mf-places")}</div>
         <div class="grid2"><div class="fld"><label class="f">Suma scrisă de mână € (încasat, cu bacșiș)</label><input type="text" inputmode="decimal" id="mf-hand" value="${scan.hand ? String(scan.hand).replace(".", ",") : ""}" placeholder="0,00"></div>
           <div class="fld"><label class="f">Card € (din Z)</label><input type="text" inputmode="decimal" id="mf-zcard" value="${scan.zCard ? String(scan.zCard).replace(".", ",") : ""}" placeholder="0,00"></div></div>
         <div class="hint" id="mf-handinfo" style="font-weight:600"></div></div></div>` : ""}
@@ -4406,6 +4412,7 @@ function moveForm(mv, type, scan) {
   const handUpd = () => { const el = o.querySelector("#mf-handinfo"); if (!el) return; const c = handCalc(); o.querySelector("#mf-cashf").classList.toggle("hidden", !o.querySelector("#mf-tocash").checked);
     el.textContent = c.h ? `Numerar încasat ${money(c.cash)} (în casă cu fondul: ${money(c.cnt)}) · vânzări numerar din Z ${money(c.zCash)} → bacșiș ${money(c.tip)}` : "Scrie suma încasată (scrisă de mână pe Z).";
     el.style.color = c.h && c.cash < 0 ? "var(--acc)" : c.h && c.tip < 0 ? "var(--warn)" : "var(--muted)"; };
+  if (scan?.z || o.querySelector("#mf-place")) autoPlace(o, "#mf-date", "#mf-place");
   if (scan?.z) { ["#mf-hand", "#mf-zcard"].forEach(q => o.querySelector(q).addEventListener("input", handUpd)); o.querySelector("#mf-tocash").addEventListener("change", handUpd); }
   const autoGross = () => { if (!isIn || PROD || bk.grossTouched) return; const g = o.querySelector("#mf-gross"); const n = mvNet(mv); g.value = n ? String(r2(n * (1 + parseNum(o.querySelector("#mf-vat").value) / 100))).replace(".", ",") : ""; };
   const total = () => { o.querySelector("#mf-total").textContent = money(mvNet(mv)); autoGross();
@@ -4475,6 +4482,7 @@ function moveForm(mv, type, scan) {
     if (isIn && !PROD) { mv.gross = g("#mf-gross"); mv.paidDate = mv.paid ? (g("#mf-paiddate") || mv.date) : ""; mv.dueDate = mv.paid ? (mv.dueDate || "") : g("#mf-due");
       mv.iban = g("#mf-iban").replace(/\s+/g, "").toUpperCase(); mv.bic = g("#mf-bic").replace(/\s+/g, "").toUpperCase(); }
     if (!isIn) { mv.kind = g("#mf-kind"); mv.refund = g("#mf-refund"); }
+    if (o.querySelector("#mf-place")) mv.place = g("#mf-place");
     const learn = mv.items.filter(i => i.raw && i.name && matchKey(i.raw) !== matchKey(i.name)).map(i => [String(i.raw), String(i.name).trim()]);
     mv.items = mv.items.map(i => ({ name: String(i.name || "").trim(), qty: String(i.qty ?? "").trim(), unit: i.unit || "kg", price: String(i.price ?? "").trim() })).filter(i => i.name || parseNum(i.qty));
     if (!mv.date) { toast("Alege data."); return; }
@@ -4685,7 +4693,7 @@ function cashForm(c) {
   const pidN = lastC ? pidOf(lastC) : "at";
   c = c ? { ...c } : { id: newId(), date: localISO(), cash: "", card: "", other: "", note: "", profileId: pidN, vat: "" };
   c.profileId = pidOf(c);
-  if (isNew && c.place === undefined) c.place = lastPlace();
+  if (isNew && c.place === undefined) c.place = placeFor(c.date);
   const o = sheet(`<h3>${isNew ? "Încasări pe zi" : "Editează ziua"}</h3>
     <div class="grid2"><div class="fld"><label class="f">Data</label><input type="date" id="cf-date" value="${esc(c.date)}"></div>
       <div class="fld"><label class="f">Oraș / piață (unde s-au numărat banii)</label><input type="text" id="cf-place" list="cf-places" value="${esc(c.place || "")}" placeholder="ex. Dornbirn">${placesDL("cf-places")}</div></div>
@@ -4709,6 +4717,7 @@ function cashForm(c) {
     <div class="row" style="justify-content:space-between">
       ${isNew ? "<span></span>" : `<button class="btn danger" data-a="del">Șterge</button>`}
       <div class="row"><button class="btn" data-a="x">Renunță</button><button class="btn primary" data-a="ok">Salvează</button></div></div>`);
+  if (isNew) autoPlace(o, "#cf-date", "#cf-place");
   const g = s => o.querySelector(s).value.trim();
   const tot = () => { o.querySelector("#cf-total").textContent = money(cashTotal({ cash: g("#cf-cash"), card: g("#cf-card"), other: g("#cf-other") })); };
   const readDen = () => { const d = {}; o.querySelectorAll("[data-den]").forEach(i => { const n = parseInt(i.value, 10); if (n > 0) d[i.dataset.den] = n; }); return d; };
